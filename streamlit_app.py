@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import time
+import json
+import re
 
 NAVY = "#11224F"
 BLUE = "#29B5E8"
@@ -66,7 +68,7 @@ if "Interactive demo" in page:
 
     demo_tab = st.segmented_control(
         "Select demo",
-        ["Dynamic line rating", "Study anomaly detection", "What-if scenario modeling"],
+        ["Dynamic line rating", "Study anomaly detection", "What-if scenario modeling", "Ask the data (LLM)", "ML recommendations"],
         default="Dynamic line rating",
     )
 
@@ -238,6 +240,247 @@ if "Interactive demo" in page:
                 st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> Engineers adjust parameters and see predicted outcomes <b>in seconds</b> — before committing to full PowerGem/GE study runs that take weeks. Data + AI + application in one platform.</div>', unsafe_allow_html=True)
             else:
                 st.info("Adjust scenario parameters and click **Run scenario** to see predictive results.", icon=":material/tune:")
+
+    elif demo_tab == "Ask the data (LLM)":
+        st.markdown('<p class="section-header">Natural language grid analytics — powered by Cortex AI</p>', unsafe_allow_html=True)
+        st.markdown("Ask questions about MISO grid data in plain English. Snowflake Cortex translates your question into analytics and returns insights instantly.")
+
+        np.random.seed(77)
+        dates = pd.date_range("2025-01-01", periods=365, freq="D")
+        grid_df = pd.DataFrame({
+            "date": dates,
+            "load_mw": 85000 + 15000 * np.sin(np.arange(365) * 2 * np.pi / 365) + np.random.normal(0, 2000, 365),
+            "congestion_cost_m": np.clip(3 + 4 * np.sin(np.arange(365) * 2 * np.pi / 365) + np.random.normal(0, 1.5, 365), 0.5, 12),
+            "wind_gen_mw": np.clip(15000 + 8000 * np.sin(np.arange(365) * 2 * np.pi / 365 + 1) + np.random.normal(0, 3000, 365), 2000, 30000),
+            "solar_gen_mw": np.clip(8000 * np.maximum(0, np.sin(np.arange(365) * 2 * np.pi / 365)) + np.random.normal(0, 1500, 365), 0, 15000),
+            "line_utilization_pct": np.clip(55 + 20 * np.sin(np.arange(365) * 2 * np.pi / 365) + np.random.normal(0, 8, 365), 25, 95),
+            "reserve_margin_pct": np.clip(18 - 8 * np.sin(np.arange(365) * 2 * np.pi / 365) + np.random.normal(0, 3, 365), 3, 35),
+            "region": np.random.choice(["Midwest", "South", "Central", "North"], 365),
+        })
+        grid_df["month"] = grid_df["date"].dt.month_name()
+        grid_df["quarter"] = "Q" + grid_df["date"].dt.quarter.astype(str)
+
+        suggested = [
+            "What were the top 5 highest congestion cost days?",
+            "Show me average load by quarter",
+            "Which month had the lowest reserve margin?",
+            "Compare wind vs solar generation by month",
+            "When did line utilization exceed 85%?",
+            "What is the correlation between wind generation and congestion costs?",
+        ]
+
+        st.caption("Try one of these or type your own:")
+        cols = st.columns(3)
+        for i, q in enumerate(suggested):
+            with cols[i % 3]:
+                if st.button(q, key=f"sq_{i}", use_container_width=True):
+                    st.session_state["nlq"] = q
+
+        user_q = st.chat_input("Ask a question about the grid data...")
+        if user_q:
+            st.session_state["nlq"] = user_q
+
+        if st.session_state.get("nlq"):
+            query = st.session_state["nlq"]
+            with st.chat_message("user"):
+                st.markdown(query)
+
+            with st.chat_message("assistant", avatar=":material/bolt:"):
+                with st.spinner("Cortex AI is analyzing..."):
+                    time.sleep(1.2)
+
+                ql = query.lower()
+                if "highest congestion" in ql or "top" in ql and "congestion" in ql:
+                    result = grid_df.nlargest(5, "congestion_cost_m")[["date", "congestion_cost_m", "load_mw", "region"]].copy()
+                    result.columns = ["Date", "Congestion Cost ($M)", "Load (MW)", "Region"]
+                    result["Congestion Cost ($M)"] = result["Congestion Cost ($M)"].round(1)
+                    st.markdown("**Top 5 highest congestion cost days:**")
+                    st.dataframe(result, hide_index=True, use_container_width=True)
+                    st.markdown(f"The highest congestion day was **{result.iloc[0]['Date'].strftime('%B %d, %Y')}** at **${result.iloc[0]['Congestion Cost ($M)']}M** in the **{result.iloc[0]['Region']}** region. These peaks correlate with high load periods and constrained transmission corridors.")
+
+                elif "average load" in ql and "quarter" in ql:
+                    result = grid_df.groupby("quarter")["load_mw"].mean().reset_index()
+                    result.columns = ["Quarter", "Avg Load (MW)"]
+                    result["Avg Load (MW)"] = result["Avg Load (MW)"].round(0).astype(int)
+                    fig = go.Figure(go.Bar(x=result["Quarter"], y=result["Avg Load (MW)"], marker_color=BLUE, text=result["Avg Load (MW)"].apply(lambda x: f"{x:,}"), textposition="outside"))
+                    fig.update_layout(title="Average load by quarter", yaxis_title="MW", height=350)
+                    st.plotly_chart(fig, use_container_width=True)
+                    peak_q = result.loc[result["Avg Load (MW)"].idxmax()]
+                    st.markdown(f"**{peak_q['Quarter']}** had the highest average load at **{peak_q['Avg Load (MW)']:,} MW**, driven by seasonal cooling/heating demand.")
+
+                elif "lowest reserve margin" in ql:
+                    monthly = grid_df.groupby("month")["reserve_margin_pct"].mean().reset_index()
+                    monthly.columns = ["Month", "Avg Reserve Margin (%)"]
+                    monthly["Avg Reserve Margin (%)"] = monthly["Avg Reserve Margin (%)"].round(1)
+                    month_order = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+                    monthly["sort"] = monthly["Month"].apply(lambda x: month_order.index(x))
+                    monthly = monthly.sort_values("sort").drop(columns="sort")
+                    colors = [RED if v < 10 else ORANGE if v < 15 else GREEN for v in monthly["Avg Reserve Margin (%)"]]
+                    fig = go.Figure(go.Bar(x=monthly["Month"], y=monthly["Avg Reserve Margin (%)"], marker_color=colors, text=monthly["Avg Reserve Margin (%)"].apply(lambda x: f"{x}%"), textposition="outside"))
+                    fig.update_layout(title="Average reserve margin by month", yaxis_title="%", height=380)
+                    st.plotly_chart(fig, use_container_width=True)
+                    lowest = monthly.loc[monthly["Avg Reserve Margin (%)"].idxmin()]
+                    st.markdown(f"**{lowest['Month']}** had the lowest average reserve margin at **{lowest['Avg Reserve Margin (%)']}%**. Months below 15% (orange/red) indicate potential reliability stress and warrant proactive study review.")
+
+                elif "wind" in ql and "solar" in ql:
+                    monthly = grid_df.groupby(grid_df["date"].dt.month).agg({"wind_gen_mw": "mean", "solar_gen_mw": "mean"}).reset_index()
+                    monthly.columns = ["Month", "Wind (MW)", "Solar (MW)"]
+                    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(name="Wind", x=months, y=monthly["Wind (MW)"], marker_color=BLUE))
+                    fig.add_trace(go.Bar(name="Solar", x=months, y=monthly["Solar (MW)"], marker_color=ORANGE))
+                    fig.update_layout(title="Wind vs Solar generation by month", yaxis_title="Avg MW", height=380, barmode="group")
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.markdown("Wind generation peaks in spring/fall with seasonal wind patterns. Solar peaks in summer. Together they provide complementary renewable coverage across the year.")
+
+                elif "utilization" in ql and ("85" in ql or "exceed" in ql or "above" in ql):
+                    high_util = grid_df[grid_df["line_utilization_pct"] > 85][["date", "line_utilization_pct", "load_mw", "region"]].copy()
+                    high_util.columns = ["Date", "Utilization (%)", "Load (MW)", "Region"]
+                    high_util["Utilization (%)"] = high_util["Utilization (%)"].round(1)
+                    st.markdown(f"**{len(high_util)} days** exceeded 85% line utilization:")
+                    st.dataframe(high_util.head(20), hide_index=True, use_container_width=True)
+                    if len(high_util) > 20:
+                        st.caption(f"Showing 20 of {len(high_util)} days.")
+                    st.markdown("High utilization days are prime candidates for DLR deployment — these are the corridors where dynamic ratings would have the most immediate impact on congestion relief.")
+
+                elif "correlation" in ql or ("wind" in ql and "congestion" in ql):
+                    corr = grid_df["wind_gen_mw"].corr(grid_df["congestion_cost_m"])
+                    fig = go.Figure(go.Scatter(x=grid_df["wind_gen_mw"], y=grid_df["congestion_cost_m"], mode="markers", marker=dict(color=BLUE, size=4, opacity=0.5)))
+                    fig.update_layout(title=f"Wind generation vs congestion cost (r = {corr:.2f})", xaxis_title="Wind Generation (MW)", yaxis_title="Congestion Cost ($M)", height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                    direction = "positive" if corr > 0 else "negative"
+                    st.markdown(f"The correlation is **{corr:.2f}** ({direction}). {'Higher wind can increase congestion when transmission constraints prevent power delivery to load centers — exactly the problem DLR solves by unlocking more line capacity.' if corr > 0 else 'Higher wind tends to reduce congestion costs by displacing more expensive generation.'}")
+
+                else:
+                    monthly_summary = grid_df.groupby("quarter").agg({"load_mw": "mean", "congestion_cost_m": "sum", "reserve_margin_pct": "mean", "line_utilization_pct": "mean"}).round(1).reset_index()
+                    monthly_summary.columns = ["Quarter", "Avg Load (MW)", "Total Congestion ($M)", "Avg Reserve Margin (%)", "Avg Line Utilization (%)"]
+                    st.markdown(f"Here's a quarterly summary of the grid data that's relevant to your question:")
+                    st.dataframe(monthly_summary, hide_index=True, use_container_width=True)
+                    st.markdown(f"""Based on the data, the grid shows clear seasonal patterns:
+- **Peak load and congestion** occur in summer (Q3) when cooling demand drives utilization up
+- **Reserve margins tighten** during peak periods, increasing reliability risk
+- **Line utilization** averages {grid_df['line_utilization_pct'].mean():.0f}% but spikes to {grid_df['line_utilization_pct'].max():.0f}% — DLR would unlock significant headroom on those peak days
+
+Try asking a more specific question like "What were the top 5 highest congestion cost days?" for deeper analysis.""")
+
+        st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> This demonstrates <b>Cortex Analyst</b> — Snowflake\'s natural language query engine. In production, MISO engineers would ask questions about study data, market data, and grid operations in plain English. No SQL. No waiting for reports. No submitting tickets to the data team.</div>', unsafe_allow_html=True)
+
+    elif demo_tab == "ML recommendations":
+        st.markdown('<p class="section-header">ML-driven grid recommendations — real-time decision support</p>', unsafe_allow_html=True)
+        st.markdown("Snowflake's ML models continuously analyze current grid conditions and generate actionable recommendations for operators.")
+
+        st.markdown("#### Set current grid conditions")
+        rc1, rc2, rc3, rc4 = st.columns(4)
+        with rc1:
+            cur_temp = st.number_input("Temperature (°F)", 0, 120, 58, key="ml_temp")
+        with rc2:
+            cur_wind = st.number_input("Wind speed (mph)", 0, 50, 14, key="ml_wind")
+        with rc3:
+            cur_load = st.number_input("System load (GW)", 50, 150, 95, key="ml_load")
+        with rc4:
+            cur_season = st.selectbox("Season", ["Spring", "Summer", "Fall", "Winter"], key="ml_season")
+
+        if st.button("Generate ML recommendations", type="primary", icon=":material/model_training:", use_container_width=True):
+            with st.spinner("ML model evaluating conditions..."):
+                time.sleep(2)
+
+            static_cap = 1200
+            tf = max(0.4, 1.0 - (cur_temp - 40) * 0.008)
+            wf = 1.0 + cur_wind * 0.015
+            sf = 0.92
+            aar_cap = static_cap * tf * sf
+            dlr_cap = static_cap * tf * wf * sf
+            aar_gain = ((aar_cap - static_cap) / static_cap) * 100
+            dlr_gain = ((dlr_cap - static_cap) / static_cap) * 100
+
+            load_ratio = cur_load / 120
+            season_risk = {"Spring": 0.3, "Summer": 0.9, "Fall": 0.4, "Winter": 0.7}[cur_season]
+            congestion_prob = min(95, max(5, load_ratio * 60 + season_risk * 25 - cur_wind * 0.5))
+            reliability_score = min(100, max(20, 85 - (load_ratio - 0.7) * 80 + cur_wind * 0.3 - season_risk * 10))
+            anomaly_risk = min(90, max(5, abs(cur_temp - 65) * 0.8 + (cur_load - 85) * 0.3 + season_risk * 15))
+
+            st.markdown('<p class="section-header">Model output: Current conditions assessment</p>', unsafe_allow_html=True)
+
+            with st.container(horizontal=True):
+                st.metric("Congestion probability", f"{congestion_prob:.0f}%", "High" if congestion_prob > 60 else "Moderate" if congestion_prob > 35 else "Low", border=True)
+                st.metric("Reliability score", f"{reliability_score:.0f}/100", "Good" if reliability_score > 70 else "At risk" if reliability_score > 50 else "Critical", border=True)
+                st.metric("Study anomaly risk", f"{anomaly_risk:.0f}%", "Elevated" if anomaly_risk > 50 else "Normal", border=True)
+                st.metric("DLR capacity available", f"{dlr_cap:.0f} MW", f"{dlr_gain:+.0f}% vs static", border=True)
+
+            st.markdown('<p class="section-header">AI recommendations</p>', unsafe_allow_html=True)
+
+            recs = []
+            if dlr_gain > 10:
+                recs.append({
+                    "priority": "High",
+                    "category": "Capacity optimization",
+                    "icon": ":material/trending_up:",
+                    "title": f"Activate DLR on constrained corridors — {dlr_gain:+.0f}% capacity available",
+                    "detail": f"Current conditions (temp: {cur_temp}°F, wind: {cur_wind} mph) support a DLR rating of **{dlr_cap:.0f} MW** vs the static rating of {static_cap} MW. This unlocks **{dlr_cap - static_cap:.0f} MW** of additional transfer capability on the Midwest Corridor alone.",
+                    "action": "Apply dynamic rating to top 10 constrained flowgates. Estimated congestion savings: $2.1M today.",
+                })
+            elif aar_gain > 3:
+                recs.append({
+                    "priority": "Medium",
+                    "category": "Capacity optimization",
+                    "icon": ":material/trending_up:",
+                    "title": f"AAR adjustment recommended — {aar_gain:+.0f}% above static",
+                    "detail": f"Ambient conditions support an AAR of **{aar_cap:.0f} MW**. Even without DLR sensors, this provides incremental capacity.",
+                    "action": "Update ambient-adjusted ratings for temperature-sensitive corridors.",
+                })
+
+            if congestion_prob > 50:
+                recs.append({
+                    "priority": "High",
+                    "category": "Congestion management",
+                    "icon": ":material/warning:",
+                    "title": f"Elevated congestion risk detected — {congestion_prob:.0f}% probability",
+                    "detail": f"Load at {cur_load} GW during {cur_season.lower()} creates transmission bottlenecks. Historical patterns show {congestion_prob:.0f}% probability of significant congestion events under these conditions.",
+                    "action": "Pre-position reserves on constrained interfaces. Consider accelerating planned outage returns.",
+                })
+
+            if anomaly_risk > 45:
+                recs.append({
+                    "priority": "Medium",
+                    "category": "Study data quality",
+                    "icon": ":material/search:",
+                    "title": f"Elevated anomaly risk in study inputs — {anomaly_risk:.0f}% likelihood",
+                    "detail": f"Current conditions deviate from seasonal norms. ML model flags a {anomaly_risk:.0f}% probability that today's study inputs contain statistical anomalies that manual review would miss.",
+                    "action": "Run Cortex AI anomaly scan on today's study inputs before executing scheduled reliability studies.",
+                })
+
+            if reliability_score < 65:
+                recs.append({
+                    "priority": "Critical" if reliability_score < 50 else "High",
+                    "category": "Reliability",
+                    "icon": ":material/error:" if reliability_score < 50 else ":material/shield:",
+                    "title": f"Reliability score below threshold — {reliability_score:.0f}/100",
+                    "detail": f"System conditions suggest tightening margins. Load-to-capacity ratio is elevated for {cur_season.lower()} conditions.",
+                    "action": "Review contingency plans. Validate study assumptions against current operating conditions. Consider conservative operating posture.",
+                })
+
+            recs.append({
+                "priority": "Info",
+                "category": "Continuous learning",
+                "icon": ":material/auto_awesome:",
+                "title": "Model confidence: Updated with latest 30-day operational data",
+                "detail": "Recommendations incorporate historical patterns, real-time weather, and the most recent study results. Each study run feeds back into the model, improving prediction accuracy over time.",
+                "action": "No action required. Model retrains continuously on Snowflake's elastic compute.",
+            })
+
+            for rec in recs:
+                priority_colors = {"Critical": "red", "High": "orange", "Medium": "blue", "Info": "gray"}
+                badge_color = priority_colors.get(rec["priority"], "gray")
+                with st.container(border=True):
+                    header_cols = st.columns([3, 1])
+                    with header_cols[0]:
+                        st.markdown(f"{rec['icon']} **{rec['title']}**")
+                    with header_cols[1]:
+                        st.badge(rec["priority"], color=badge_color)
+                    st.caption(rec["detail"])
+                    st.markdown(f"**Recommended action:** {rec['action']}")
+
+            st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> This is <b>Cortex ML</b> generating real-time, condition-based recommendations. In production, these models run continuously on Snowflake — ingesting weather, load, and study data to provide operators with proactive guidance. No manual analysis. No waiting. The grid tells you what it needs.</div>', unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════
