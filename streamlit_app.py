@@ -818,13 +818,13 @@ elif "Onsite agenda" in page:
 
     st.markdown('<p class="section-header">Session goals</p>', unsafe_allow_html=True)
     st.markdown("""
-**Primary goal:** Attendees walk away saying *"How soon can we have this?"*
+**Primary goal:** MISO leadership has a clear, confident understanding of how Snowflake accelerates grid reliability, reduces congestion costs, and complements the existing Data Fabric investment — with a defined path to evaluate.
 
 **By stakeholder:**
-- **Tim** leaves confident Snowflake doesn't duplicate Fabric — it accelerates its ROI
-- **Amber** sees strategic fit for forward market operations and planning
-- **Bonnie** validates technical compatibility with Azure, AD, and existing security
-- **Ben** has executive buy-in to move forward with 90-day evaluation
+- **Tim** has confidence that Snowflake strengthens (not duplicates) the Azure/Fabric strategy and delivers measurable operational ROI
+- **Amber** sees how Snowflake supports forward market planning and aligns with her team's priorities
+- **Bonnie** confirms Snowflake integrates cleanly with Azure AD, Iceberg, OneLake, and existing security policies
+- **Ben** has the executive alignment needed to move forward with a focused 90-day evaluation
 """)
 
     st.markdown('<p class="section-header">Logistics</p>', unsafe_allow_html=True)
