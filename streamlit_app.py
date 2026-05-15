@@ -834,7 +834,22 @@ elif "Onsite agenda" in page:
     with c2:
         st.markdown("**Requirements**\n- Conference room with screen/projector\n- Wi-Fi access for demo\n- No MISO data or security approvals needed")
 
-    st.markdown("**Pre-session checklist:**")
-    st.markdown("1. Ben reviews and approves this agenda\n2. Snowflake prepares demo environments with public energy data\n3. Ben confirms attendee availability and room booking\n4. Kala sends calendar invite with session overview")
+    st.markdown('<p class="section-header">Next steps: Solution accelerator</p>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown("""
+**Solution Accelerator** — Snowflake creates an accelerator to show real-time load forecasting, weather impacts, and risk assessment capabilities that is built with synthetic data to demonstrate value quickly.
+
+The goal is demonstrating tangible business value to MISO's decision-makers. The typical solution accelerator approach uses simulated data first, followed by potential deployment with real data.
+
+**Phase 1 — Synthetic data accelerator**
+1. Snowflake builds a working solution accelerator using simulated MISO-like grid data
+2. Demonstrates load forecasting, anomaly detection, DLR, and what-if scenario capabilities
+3. No MISO data or security approvals required — ready to demo within weeks
+
+**Phase 2 — Real data deployment**
+4. With executive approval, connect to MISO's actual study data and grid operations
+5. Validate results against real operational outcomes
+6. Scale from proof-of-value to production capability
+""")
 
     render_comments("onsite_agenda", "Onsite Agenda")
