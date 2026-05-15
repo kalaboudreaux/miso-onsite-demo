@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import time
 import json
 import re
+from datetime import datetime
 
 NAVY = "#11224F"
 BLUE = "#29B5E8"
@@ -21,6 +22,50 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+if "comments" not in st.session_state:
+    st.session_state["comments"] = {}
+
+def render_comments(section_key: str, section_label: str):
+    if section_key not in st.session_state["comments"]:
+        st.session_state["comments"][section_key] = []
+    comments = st.session_state["comments"][section_key]
+    with st.expander(f":material/comment: Notes & comments — {section_label} ({len(comments)})", expanded=False):
+        for i, c in enumerate(comments):
+            with st.container(border=True):
+                hcol1, hcol2 = st.columns([4, 1])
+                with hcol1:
+                    st.caption(f"{c['author']} — {c['time']}")
+                with hcol2:
+                    if st.button(":material/delete:", key=f"del_{section_key}_{i}", help="Delete"):
+                        st.session_state["comments"][section_key].pop(i)
+                        st.rerun()
+                st.markdown(c["text"])
+        with st.container(border=True):
+            author = st.text_input("Your name", value=st.session_state.get("comment_author", ""), key=f"author_{section_key}", placeholder="e.g. Tim Aliff")
+            new_comment = st.text_area("Add a note or comment", key=f"text_{section_key}", placeholder="Type your thoughts, questions, or feedback here...")
+            if st.button("Save comment", key=f"save_{section_key}", type="primary", icon=":material/save:"):
+                if new_comment.strip():
+                    st.session_state["comment_author"] = author
+                    st.session_state["comments"][section_key].append({
+                        "author": author or "Anonymous",
+                        "time": datetime.now().strftime("%b %d, %Y %I:%M %p"),
+                        "text": new_comment.strip(),
+                        "section": section_label,
+                    })
+                    st.rerun()
+                else:
+                    st.warning("Please enter a comment before saving.")
+
+def render_export_all():
+    all_comments = []
+    for section_key, comments in st.session_state.get("comments", {}).items():
+        all_comments.extend(comments)
+    if all_comments:
+        export_md = "# MISO x Snowflake — Session Notes\n\n"
+        for c in all_comments:
+            export_md += f"### {c['section']}\n**{c['author']}** — {c['time']}\n\n{c['text']}\n\n---\n\n"
+        st.download_button(":material/download: Export all notes", export_md, "miso_session_notes.md", "text/markdown")
 
 st.markdown(f"""
 <style>
@@ -58,6 +103,8 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Prepared by Kala Boudreaux")
     st.caption("kala.boudreaux@snowflake.com")
+    st.markdown("---")
+    render_export_all()
 
 # ═══════════════════════════════════════════════
 # PAGE 1: INTERACTIVE DEMO
@@ -119,6 +166,7 @@ if "Interactive demo" in page:
             st.plotly_chart(fig, use_container_width=True)
 
         unlocked = max(0, dynamic_rating - static_rating)
+        render_comments("demo_dlr", "Dynamic Line Rating Demo")
         st.markdown(f'<div class="callout-box"><b>What you\'re seeing:</b> The green shaded area represents <b>capacity that exists today but goes unused</b> under seasonal ratings. On this simulated day, DLR unlocks an additional <b>{unlocked:.0f} MW</b> — equivalent to powering <b>~{unlocked * 500:,.0f} homes</b> — without building a single new line.</div>', unsafe_allow_html=True)
 
         with st.expander("How it works — Snowflake + Siemens architecture", icon=":material/architecture:"):
@@ -172,6 +220,8 @@ if "Interactive demo" in page:
         fig2.add_trace(go.Scatter(x=study_df.loc[detected, "date"], y=study_df.loc[detected, "load_mw"], name="AI-detected anomalies", mode="markers", marker=dict(color=RED, size=12, symbol="x", line=dict(width=2))))
         fig2.update_layout(title="Cortex AI anomaly detection — 12-month study input scan", xaxis_title="Date", yaxis_title="Load (MW)", height=420, margin=dict(t=40, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02), hovermode="x unified")
         st.plotly_chart(fig2, use_container_width=True)
+
+        render_comments("demo_anomaly", "Study Anomaly Detection Demo")
 
         st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> Cortex AI scanned a year of study data in <b>2.3 seconds</b> and flagged anomalies that would take engineers <b>weeks to find manually</b>. Each red marker is a data point deviating from expected patterns — the "needles buried in haystacks made of needles."</div>', unsafe_allow_html=True)
 
@@ -236,6 +286,8 @@ if "Interactive demo" in page:
                     st.warning("**Caution:** Reserve margin below target. Consider accelerating generation interconnection or transmission upgrades.", icon=":material/warning:")
                 else:
                     st.success("**Adequate:** Reserve margin within acceptable range under this scenario.", icon=":material/check_circle:")
+
+                render_comments("demo_whatif", "What-If Scenario Modeling Demo")
 
                 st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> Engineers adjust parameters and see predicted outcomes <b>in seconds</b> — before committing to full PowerGem/GE study runs that take weeks. Data + AI + application in one platform.</div>', unsafe_allow_html=True)
             else:
@@ -363,6 +415,8 @@ if "Interactive demo" in page:
 
 Try asking a more specific question like "What were the top 5 highest congestion cost days?" for deeper analysis.""")
 
+        render_comments("demo_llm", "Ask the Data (LLM)")
+
         st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> This demonstrates <b>Cortex Analyst</b> — Snowflake\'s natural language query engine. In production, MISO engineers would ask questions about study data, market data, and grid operations in plain English. No SQL. No waiting for reports. No submitting tickets to the data team.</div>', unsafe_allow_html=True)
 
     elif demo_tab == "ML recommendations":
@@ -479,6 +533,8 @@ Try asking a more specific question like "What were the top 5 highest congestion
                         st.badge(rec["priority"], color=badge_color)
                     st.caption(rec["detail"])
                     st.markdown(f"**Recommended action:** {rec['action']}")
+
+            render_comments("demo_ml", "ML Recommendations")
 
             st.markdown('<div class="callout-box"><b>What you\'re seeing:</b> This is <b>Cortex ML</b> generating real-time, condition-based recommendations. In production, these models run continuously on Snowflake — ingesting weather, load, and study data to provide operators with proactive guidance. No manual analysis. No waiting. The grid tells you what it needs.</div>', unsafe_allow_html=True)
 
@@ -604,6 +660,8 @@ MISO is a nonprofit — every improvement flows directly to ~400 member utilitie
 - ERCOT, PJM, and AEP are already running production workloads on Snowflake
 """)
 
+    render_comments("exec_overview", "Executive Overview")
+
 
 # ═══════════════════════════════════════════════
 # PAGE 3: BUSINESS VALUE ANALYSIS
@@ -705,6 +763,8 @@ elif "Business value" in page:
 - [FERC — Explainer on Dynamic Line Ratings](https://www.ferc.gov/explainer-implementation-dynamic-line-ratings)
 """)
 
+    render_comments("biz_value", "Business Value Analysis")
+
 
 # ═══════════════════════════════════════════════
 # PAGE 4: ONSITE AGENDA
@@ -776,3 +836,5 @@ elif "Onsite agenda" in page:
 
     st.markdown("**Pre-session checklist:**")
     st.markdown("1. Ben reviews and approves this agenda\n2. Snowflake prepares demo environments with public energy data\n3. Ben confirms attendee availability and room booking\n4. Kala sends calendar invite with session overview")
+
+    render_comments("onsite_agenda", "Onsite Agenda")
